@@ -1,25 +1,27 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, FileText, Download, Upload, MessageCircle, ArrowRight, ExternalLink, ShieldCheck, Save, Printer } from 'lucide-react';
+import { BookOpen, Check, FileText, Download, Upload, MessageCircle, ArrowRight, ExternalLink, ShieldCheck, Save, Printer, LockKeyhole } from 'lucide-react';
 import { stages, sections, summaryLabels, probes, emptyRecord, questionKey, documentText, type RecordData } from '@/lib/questions';
 import {openPrivateExport} from '@/lib/site-export';
+import type {SecureStore} from '@/lib/professor-vault';
 
 const professors = ['곽은주','오소정'];
 const courses = ['행복한인간관계심리','학령기의사소통장애'];
 type Store = Record<string,RecordData>;
 type ApiData = {status:string;records?:Store;message?:string;documentUrl?:string;chatGPTSignInPath?:string;reused?:boolean;retryAfterMs?:number};
 async function responseData(response:Response):Promise<ApiData>{const data=await response.json();if(!data||typeof data!=='object'||!('status' in data))throw new Error('Invalid response');return data as ApiData;}
-export default function Coach({storageScope,runtime='sites'}:{storageScope:string;runtime?:'sites'|'vercel'}) {
+export default function Coach({storageScope,runtime='sites',lockedProfessor,secureStore,onProfessorChange,onLock}:{storageScope:string;runtime?:'sites'|'vercel';lockedProfessor?:number;secureStore?:SecureStore;onProfessorChange?:(professor:number)=>void;onLock?:()=>void}) {
  const [records,setRecords]=useState<Store>({});
- const [ready,setReady]=useState(false),[prof,setProf]=useState(0),[stage,setStage]=useState(0),[section,setSection]=useState(0);
+ const [ready,setReady]=useState(false),[prof,setProf]=useState(lockedProfessor??0),[stage,setStage]=useState(0),[section,setSection]=useState(0);
  const [saveState,setSaveState]=useState('자동 저장 준비 중'),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[review,setReview]=useState(false),[cooldown,setCooldown]=useState(false);
  const [error,setError]=useState<{message:string;href?:string;url?:string}|null>(null);
+ const [loadError,setLoadError]=useState('');
  const [cloudReady,setCloudReady]=useState(false),[cloudState,setCloudState]=useState('계정 저장 연결 중');
  const syncVersion=useRef(0);
  const fileRef=useRef<HTMLInputElement>(null), busyRef=useRef(false);
  const storageKey=`tu-teaching-notes-v1:${storageScope}`;
- useEffect(()=>{try {const raw=localStorage.getItem(storageKey); if(raw){const parsed=JSON.parse(raw);if(!validStore(parsed))throw new Error();setRecords(parsed);}setSaveState('이 브라우저에 자동 저장');}catch{setSaveState('저장된 기록을 읽을 수 없습니다. 백업 파일을 확인해 주세요.');}setReady(true);},[storageKey]);
- useEffect(()=>{if(!ready)return;try{localStorage.setItem(storageKey,JSON.stringify(records));setSaveState('이 브라우저에 저장됨');}catch{setSaveState('자동 저장 실패 · 백업 파일을 내려받아 주세요');}},[records,ready,storageKey]);
+ useEffect(()=>{let active=true;const read=async()=>{try{const parsed=secureStore?await secureStore.read():JSON.parse(localStorage.getItem(storageKey)||'{}');if(!validStore(parsed))throw new Error();if(active){setRecords(parsed);setSaveState(secureStore?'교수님별 암호화 저장':'이 브라우저에 자동 저장');setReady(true);}}catch{if(active)setLoadError('저장된 기록을 읽을 수 없습니다. 기존 기록은 보존했습니다. 백업 파일을 확인하거나 다시 입장해 주세요.');}};void read();return()=>{active=false;};},[storageKey,secureStore]);
+ useEffect(()=>{if(!ready)return;let active=true;if(secureStore){secureStore.write(records).then(()=>{if(active)setSaveState('암호화하여 저장됨');}).catch(()=>{if(active)setSaveState('암호화 저장 실패 · 백업 파일을 내려받아 주세요');});return()=>{active=false;};}try{localStorage.setItem(storageKey,JSON.stringify(records));setSaveState('이 브라우저에 저장됨');}catch{setSaveState('자동 저장 실패 · 백업 파일을 내려받아 주세요');}},[records,ready,storageKey,secureStore]);
  useEffect(()=>{if(!ready)return;if(runtime==='vercel'){setCloudState('이 기기에 보관 · Docs 비공개 연결');return;}let active=true;fetch('/api/records').then(responseData).then(data=>{if(!active)return;if(data.status==='success'&&validStore(data.records)){setRecords(local=>{const merged={...local};for(const [key,record] of Object.entries(data.records as Store)){if(!merged[key]||(record.updatedAt??0)>(merged[key].updatedAt??0))merged[key]=record;}return merged;});setCloudState('계정 기록 불러옴');setCloudReady(true);}else setCloudState('계정 저장 연결 전');}).catch(()=>{if(active)setCloudState('계정 저장 연결 실패');});return()=>{active=false;};},[ready,runtime]);
  useEffect(()=>{if(!cloudReady)return;const version=++syncVersion.current;setCloudState('계정에 저장 중…');const timer=setTimeout(()=>{fetch('/api/records',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(records)}).then(responseData).then(data=>{if(syncVersion.current===version)setCloudState(data.status==='success'?'계정에도 저장됨':'계정 저장 실패 · 브라우저에 보관');}).catch(()=>{if(syncVersion.current===version)setCloudState('계정 저장 실패 · 브라우저에 보관');});},750);return()=>clearTimeout(timer);},[records,cloudReady]);
  const id=`${prof}-${stage}`, r=records[id]??emptyRecord(courses[prof]);
@@ -29,10 +31,10 @@ export default function Coach({storageScope,runtime='sites'}:{storageScope:strin
  function update(patch:Partial<RecordData>){setRecords(prev=>({...prev,[id]:{...(prev[id]??emptyRecord(courses[prof])),...patch,updatedAt:Date.now()}}));}
  function answer(key:string,value:string,kind:'answers'|'summary'|'extra'='answers'){update({[kind]:{...r[kind],[key]:value},complete:false});}
  function navigate(next:number){setSection(next);requestAnimationFrame(()=>document.querySelector('.editor')?.scrollIntoView({behavior:'smooth',block:'start'}));}
- function switchTo(p:number,s:number){setProf(p);setStage(s);setSection(0);setReview(false);setError(null);setNotice('');}
+ function switchTo(p:number,s:number){if(p!==prof&&onProfessorChange){onProfessorChange(p);return;}setProf(p);setStage(s);setSection(0);setReview(false);setError(null);setNotice('');}
  function download(content:string,name:string,type='application/json'){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
  function backup(){download(JSON.stringify({version:1,records},null,2),'똑똑_상담기록_백업.json');}
- async function restore(file?:File){if(!file)return;try{const data=JSON.parse(await file.text());if(data.version!==1||!validStore(data.records))throw new Error();if(!window.confirm('현재 브라우저 기록을 백업 파일의 기록으로 바꿀까요?'))return;setRecords(Object.fromEntries(Object.entries(data.records as Store).map(([k,v])=>[k,{...v,updatedAt:Date.now()}])));setNotice('백업 기록을 복원했습니다.');}catch{setNotice('올바른 똑똑 백업 파일을 선택해 주세요.');}if(fileRef.current)fileRef.current.value='';}
+ async function restore(file?:File){if(!file)return;try{const data=JSON.parse(await file.text());if(data.version!==1||!validStore(data.records))throw new Error();const entries=Object.entries(data.records as Store).filter(([key])=>lockedProfessor===undefined||key.startsWith(`${lockedProfessor}-`));if(!entries.length){setNotice('선택한 교수님의 기록이 없는 백업 파일입니다.');return;}if(!window.confirm('현재 교수님의 기록을 백업 파일의 기록으로 바꿀까요?'))return;setRecords(Object.fromEntries(entries.map(([k,v])=>[k,{...v,updatedAt:Date.now()}])));setNotice('선택한 교수님의 백업 기록을 복원했습니다.');}catch{setNotice('올바른 똑똑 백업 파일을 선택해 주세요.');}if(fileRef.current)fileRef.current.value='';}
  async function exportDoc(){
   if(busyRef.current||cooldown)return;busyRef.current=true;setBusy(true);setError(null);setNotice('');
   const recordId=id, snapshot={...r};
@@ -46,6 +48,7 @@ export default function Coach({storageScope,runtime='sites'}:{storageScope:strin
   }catch(error){setError({message:runtime==='vercel'&&error instanceof Error?error.message:'연결이 끊겨 저장 결과를 확인하지 못했습니다. Google Drive에서 문서를 먼저 확인해 주세요. 다시 저장하면 서버의 저장 기록을 확인합니다.'});}
   finally{setBusy(false);busyRef.current=false;}
  }
+ if(loadError)return <div className="access-shell"><div className="access-card"><h1>기록 확인이 필요합니다.</h1><p role="alert">{loadError}</p>{onLock&&<button className="button primary" onClick={onLock}>다시 잠그기</button>}</div></div>;
  if(!ready)return <div className="loading">상담 노트를 준비하고 있습니다…</div>;
  const reviewIndex=list.length+1;
  const title=section<list.length?current.title:section===list.length&&stage===0?'상황별 후속 질문':'상담 요약과 저장';
@@ -53,7 +56,7 @@ export default function Coach({storageScope,runtime='sites'}:{storageScope:strin
   <div className="app-shell">
    <header className="utility-bar">
     <a className="brand" href="/"><BookOpen size={21}/><strong>똑똑</strong><span>수업 컨설팅 노트</span></a>
-    <div className="utility-actions"><span className="save-indicator"><i/>{saveState}</span><button onClick={backup}><Download size={17}/><span>백업</span></button><button onClick={()=>fileRef.current?.click()} disabled={busy}><Upload size={17}/><span>불러오기</span></button><button onClick={()=>window.print()}><Printer size={18}/><span>출력</span></button></div>
+    <div className="utility-actions">{onLock&&<button onClick={onLock} disabled={busy}><LockKeyhole size={17}/><span>다시 잠그기</span></button>}<span className="save-indicator"><i/>{saveState}</span><button onClick={backup}><Download size={17}/><span>백업</span></button><button onClick={()=>fileRef.current?.click()} disabled={busy}><Upload size={17}/><span>불러오기</span></button><button onClick={()=>window.print()}><Printer size={18}/><span>출력</span></button></div>
     <input hidden ref={fileRef} type="file" accept=".json" onChange={e=>restore(e.target.files?.[0])}/>
    </header>
    <div className="report-controls">
@@ -98,6 +101,7 @@ function validStore(value:unknown):value is Store{
  if(!value||typeof value!=='object'||Array.isArray(value))return false;
  return Object.entries(value).every(([key,r])=>/^[01]-[012]$/.test(key)&&r&&typeof r==='object'&&['date','course','mentor','notes'].every(k=>typeof (r as Record<string,unknown>)[k]==='string')&&['answers','summary','extra'].every(k=>{const v=(r as Record<string,unknown>)[k];return v&&typeof v==='object'&&!Array.isArray(v)&&Object.values(v).every(x=>typeof x==='string');})&&typeof (r as RecordData).complete==='boolean'&&((r as RecordData).updatedAt===undefined||typeof (r as RecordData).updatedAt==='number')&&(!(r as RecordData).exported||(/^https:\/\/docs\.google\.com\/document\/d\/[A-Za-z0-9_-]+\/edit$/.test((r as RecordData).exported!.url)&&typeof (r as RecordData).exported!.at==='string'&&typeof (r as RecordData).exported!.fingerprint==='string')));
 }
+
 
 
 
