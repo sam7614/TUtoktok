@@ -8,7 +8,7 @@ const attemptsName='tu_prof_attempts';
 function guidance(professor){
  try{
   const value=JSON.parse(process.env[`PROFESSOR_GUIDANCE_${professor}`]||'null');
-  return value&&['course','source','strengths','improvements'].every(k=>typeof value[k]==='string')&&value.questions&&typeof value.questions==='object'&&Object.values(value.questions).every(v=>typeof v==='string')?value:null;
+  return value&&['course','source','strengths','improvements','applicationStrengths','applicationImprovements'].every(k=>typeof value[k]==='string')&&Array.isArray(value.improvementAreas)&&value.improvementAreas.every(v=>typeof v==='string')&&value.questions&&typeof value.questions==='object'&&Object.values(value.questions).every(v=>typeof v==='string')?value:null;
  }catch{return null;}
 }
 const json=(body,status=200,headers={})=>{const result=new Headers(headers);result.set('Cache-Control','private, no-store');result.set('Vary','Cookie');return Response.json(body,{status,headers:result});};
