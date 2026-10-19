@@ -10,7 +10,7 @@ const value=z.string().max(12000);
 const recordSchema=z.object({date:z.string().max(30),course:z.string().max(300),mentor:z.string().max(100),answers:z.record(value),summary:z.record(value),extra:z.record(value),notes:value,complete:z.boolean()});
 const bodySchema=z.object({professor:z.number().int().min(0).max(1),stage:z.number().int().min(0).max(2),record:recordSchema});
 const reply=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store'}});
-function failure(result:ConnectorResult,docId?:string){return reply({...result,...(result.status==='reauthentication_required'?{chatGPTSignInPath:chatGPTSignInPath('/')}:{ }),...(docId?{documentUrl:`https://docs.google.com/document/d/${docId}/edit`}:{})},502);}
+function failure(result:ConnectorResult,docId?:string,returnTo='/'){return reply({...result,...(result.status==='reauthentication_required'?{chatGPTSignInPath:chatGPTSignInPath(returnTo)}:{ }),...(docId?{documentUrl:`https://docs.google.com/document/d/${docId}/edit`}:{})},502);}
 function objects(result:unknown):Record<string,unknown>[] {
  const all:Record<string,unknown>[]=[];
  const walk=(v:unknown,depth:number)=>{if(depth>12||!v)return;if(typeof v==='string'){try{walk(JSON.parse(v),depth+1);}catch{}return;}if(Array.isArray(v)){v.forEach(x=>walk(x,depth+1));return;}if(typeof v==='object'){all.push(v as Record<string,unknown>);Object.values(v).forEach(x=>walk(x,depth+1));}};walk(result,0);return all;
@@ -27,8 +27,9 @@ function textFrom(doc:Record<string,unknown>){
  if(doc.tabs)walk(doc.tabs);else walk(doc.body);return text;
 }
 export async function POST(request:Request){
+ let returnTo='/';try{if(new URL(request.headers.get('referer')||request.url).pathname==='/handoff')returnTo='/handoff';}catch{}
  if(request.headers.get('origin')!==new URL(request.url).origin)return reply({status:'invalid_request',message:'같은 앱에서 저장해 주세요.'},403);
- const user=await getChatGPTUser();if(!user)return reply({status:'reauthentication_required',message:'로그인한 후 Google Docs 저장을 눌러 주세요.',chatGPTSignInPath:chatGPTSignInPath('/')},401);
+ const user=await getChatGPTUser();if(!user)return reply({status:'reauthentication_required',message:'로그인한 후 Google Docs 저장을 눌러 주세요.',chatGPTSignInPath:chatGPTSignInPath(returnTo)},401);
  if(!env.DB)return reply({status:'internal_error',message:'저장 기록 데이터베이스가 준비되지 않았습니다. 초안은 브라우저에 보관됩니다.'},503);
  const raw=await request.text();if(raw.length>250000)return reply({status:'invalid_request',message:'기록이 너무 깁니다. 각 답변을 나누어 기록해 주세요.'},413);
  let data;try{data=bodySchema.parse(JSON.parse(raw));}catch{return reply({status:'invalid_request',message:'질문과 답변 형식을 확인해 주세요. 답변당 최대 12,000자입니다.'},400);}
@@ -46,7 +47,7 @@ export async function POST(request:Request){
   const created=await api.invoke(connector,'create_file',{mime_type:'application/vnd.google-apps.document',title:`[똑똑] ${professor} 교수님 · ${stages[data.stage]} · ${data.record.date} · ${key.slice(0,6)}`});
   if(created.status!=='success'){
    if(['reauthentication_required','tool_not_allowed','tool_not_found','connector_access_disabled','binding_unavailable','invalid_request'].includes(created.status))await db.prepare('DELETE FROM document_exports WHERE id=?').bind(key).run();
-   return failure(created);
+   return failure(created,undefined,returnTo);
   }
   const docId=docIdFrom(created.result);if(!docId)return reply({status:'upstream_error',message:'문서 생성 응답에서 문서 주소를 확인할 수 없습니다. Google Drive에서 제목을 확인해 주세요. 중복 생성 방지를 위해 같은 요청을 자동 반복하지 않습니다.',result:created.result},502);
   await db.prepare('UPDATE document_exports SET doc_id=?,state=?,updated=? WHERE id=?').bind(docId,'created',Date.now(),key).run();row={state:'created',doc_id:docId,updated:Date.now()};
@@ -55,7 +56,7 @@ export async function POST(request:Request){
  const lock=await db.prepare("UPDATE document_exports SET state='writing',updated=? WHERE id=? AND state IN ('created','verify')").bind(Date.now(),key).run();
  if(!lock.meta.changes&&Date.now()-row.updated<120000)return reply({status:'rate_limited',message:'이 기록을 저장하고 있습니다. 잠시 후 저장 버튼을 다시 눌러 결과를 확인해 주세요.',retryAfterMs:5000,documentUrl:`https://docs.google.com/document/d/${docId}/edit`},409);
  const read=await api.invoke(connector,'get_document',{document_id:docId});
- if(read.status!=='success'){await db.prepare("UPDATE document_exports SET state='verify' WHERE id=?").bind(key).run();return failure(read,docId);}
+ if(read.status!=='success'){await db.prepare("UPDATE document_exports SET state='verify' WHERE id=?").bind(key).run();return failure(read,docId,returnTo);}
  const doc=documentFrom(read.result);if(!doc){await db.prepare("UPDATE document_exports SET state='verify' WHERE id=?").bind(key).run();return reply({status:'upstream_error',message:'문서 구조를 확인할 수 없습니다. 생성된 문서를 열어 확인해 주세요.',documentUrl:`https://docs.google.com/document/d/${docId}/edit`},502);}
  const existing=textFrom(doc);
  if(existing.trim()===text.trim()){await db.prepare("UPDATE document_exports SET state='done',updated=? WHERE id=?").bind(Date.now(),key).run();return success(docId,true);}
@@ -63,7 +64,7 @@ export async function POST(request:Request){
  const requests:Json[]=[{insertText:{location:{index:1},text}}];
  requests.push({updateParagraphStyle:{range:{startIndex:1,endIndex:text.indexOf('\n')+1},paragraphStyle:{namedStyleType:'TITLE'},fields:'namedStyleType'}});
  const result=await api.invoke(connector,'batch_update_document',{document_id:docId,requests,...(typeof doc.revisionId==='string'?{write_control:{requiredRevisionId:doc.revisionId}}:{})});
- if(result.status!=='success'){await db.prepare("UPDATE document_exports SET state='verify' WHERE id=?").bind(key).run();return failure(result,docId);}
+ if(result.status!=='success'){await db.prepare("UPDATE document_exports SET state='verify' WHERE id=?").bind(key).run();return failure(result,docId,returnTo);}
  const verify=await api.invoke(connector,'get_document',{document_id:docId});
  const verifiedDoc=verify.status==='success'?documentFrom(verify.result):undefined;
  if(!verifiedDoc||textFrom(verifiedDoc).trim()!==text.trim()){

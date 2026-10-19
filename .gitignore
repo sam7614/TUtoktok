@@ -55,3 +55,12 @@ next-env.d.ts
 /outputs/
 /work/
 *.tsbuildinfo
+/vercel-app/node_modules/
+/vercel-app/dist/
+/vercel-app/src/shared/
+/vercel-app/src/lib/
+/vercel-app/public/
+/.vercel/
+
+.vercel
+.env*

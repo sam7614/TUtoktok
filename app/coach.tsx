@@ -2,13 +2,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { BookOpen, Check, FileText, Download, Upload, MessageCircle, ArrowRight, ExternalLink, ShieldCheck, Save, Printer } from 'lucide-react';
 import { stages, sections, summaryLabels, probes, emptyRecord, questionKey, documentText, type RecordData } from '@/lib/questions';
+import {openPrivateExport} from '@/lib/site-export';
 
 const professors = ['곽은주','오소정'];
 const courses = ['행복한인간관계심리','학령기의사소통장애'];
 type Store = Record<string,RecordData>;
 type ApiData = {status:string;records?:Store;message?:string;documentUrl?:string;chatGPTSignInPath?:string;reused?:boolean;retryAfterMs?:number};
 async function responseData(response:Response):Promise<ApiData>{const data=await response.json();if(!data||typeof data!=='object'||!('status' in data))throw new Error('Invalid response');return data as ApiData;}
-export default function Coach({storageScope}:{storageScope:string}) {
+export default function Coach({storageScope,runtime='sites'}:{storageScope:string;runtime?:'sites'|'vercel'}) {
  const [records,setRecords]=useState<Store>({});
  const [ready,setReady]=useState(false),[prof,setProf]=useState(0),[stage,setStage]=useState(0),[section,setSection]=useState(0);
  const [saveState,setSaveState]=useState('자동 저장 준비 중'),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[review,setReview]=useState(false),[cooldown,setCooldown]=useState(false);
@@ -19,7 +20,7 @@ export default function Coach({storageScope}:{storageScope:string}) {
  const storageKey=`tu-teaching-notes-v1:${storageScope}`;
  useEffect(()=>{try {const raw=localStorage.getItem(storageKey); if(raw){const parsed=JSON.parse(raw);if(!validStore(parsed))throw new Error();setRecords(parsed);}setSaveState('이 브라우저에 자동 저장');}catch{setSaveState('저장된 기록을 읽을 수 없습니다. 백업 파일을 확인해 주세요.');}setReady(true);},[storageKey]);
  useEffect(()=>{if(!ready)return;try{localStorage.setItem(storageKey,JSON.stringify(records));setSaveState('이 브라우저에 저장됨');}catch{setSaveState('자동 저장 실패 · 백업 파일을 내려받아 주세요');}},[records,ready,storageKey]);
- useEffect(()=>{if(!ready)return;let active=true;fetch('/api/records').then(responseData).then(data=>{if(!active)return;if(data.status==='success'&&validStore(data.records)){setRecords(local=>{const merged={...local};for(const [key,record] of Object.entries(data.records as Store)){if(!merged[key]||(record.updatedAt??0)>(merged[key].updatedAt??0))merged[key]=record;}return merged;});setCloudState('계정 기록 불러옴');setCloudReady(true);}else setCloudState('계정 저장 연결 전');}).catch(()=>{if(active)setCloudState('계정 저장 연결 실패');});return()=>{active=false;};},[ready]);
+ useEffect(()=>{if(!ready)return;if(runtime==='vercel'){setCloudState('이 기기에 보관 · Docs 비공개 연결');return;}let active=true;fetch('/api/records').then(responseData).then(data=>{if(!active)return;if(data.status==='success'&&validStore(data.records)){setRecords(local=>{const merged={...local};for(const [key,record] of Object.entries(data.records as Store)){if(!merged[key]||(record.updatedAt??0)>(merged[key].updatedAt??0))merged[key]=record;}return merged;});setCloudState('계정 기록 불러옴');setCloudReady(true);}else setCloudState('계정 저장 연결 전');}).catch(()=>{if(active)setCloudState('계정 저장 연결 실패');});return()=>{active=false;};},[ready,runtime]);
  useEffect(()=>{if(!cloudReady)return;const version=++syncVersion.current;setCloudState('계정에 저장 중…');const timer=setTimeout(()=>{fetch('/api/records',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(records)}).then(responseData).then(data=>{if(syncVersion.current===version)setCloudState(data.status==='success'?'계정에도 저장됨':'계정 저장 실패 · 브라우저에 보관');}).catch(()=>{if(syncVersion.current===version)setCloudState('계정 저장 실패 · 브라우저에 보관');});},750);return()=>clearTimeout(timer);},[records,cloudReady]);
  const id=`${prof}-${stage}`, r=records[id]??emptyRecord(courses[prof]);
  const list=sections[stage], current=list[section];
@@ -36,14 +37,13 @@ export default function Coach({storageScope}:{storageScope:string}) {
   if(busyRef.current||cooldown)return;busyRef.current=true;setBusy(true);setError(null);setNotice('');
   const recordId=id, snapshot={...r};
   try{
-   const res=await fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({professor:prof,stage,record:snapshot})});
-   const data=await responseData(res);
+   const data:ApiData=runtime==='vercel'?await openPrivateExport({professor:prof,stage,record:snapshot}):await responseData(await fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({professor:prof,stage,record:snapshot})}));
    if(data.status!=='success'){if(data.retryAfterMs&&data.retryAfterMs>0){setCooldown(true);setTimeout(()=>setCooldown(false),Math.min(data.retryAfterMs,2147483647));}setError({message:data.message||'저장 결과를 확인할 수 없습니다. Google Drive에서 확인한 후 다시 시도해 주세요.',href:data.chatGPTSignInPath,url:data.documentUrl});return;}
    if(!data.documentUrl||!/^https:\/\/docs\.google\.com\/document\/d\/[A-Za-z0-9_-]+\/edit$/.test(data.documentUrl))throw new Error('Invalid document URL');
    const url=data.documentUrl;
    setRecords(prev=>({...prev,[recordId]:{...(prev[recordId]??snapshot),updatedAt:Date.now(),exported:{url,at:new Date().toISOString(),fingerprint:documentText(professors[prof],stage,snapshot)}}}));
    setNotice(data.reused?'같은 내용으로 저장한 문서가 있어 기존 문서를 연결했습니다.':'Google Docs에 전체 질문과 답변을 저장했습니다.');
-  }catch{setError({message:'연결이 끊겨 저장 결과를 확인하지 못했습니다. Google Drive에서 문서를 먼저 확인해 주세요. 다시 저장하면 서버의 저장 기록을 확인합니다.'});}
+  }catch(error){setError({message:runtime==='vercel'&&error instanceof Error?error.message:'연결이 끊겨 저장 결과를 확인하지 못했습니다. Google Drive에서 문서를 먼저 확인해 주세요. 다시 저장하면 서버의 저장 기록을 확인합니다.'});}
   finally{setBusy(false);busyRef.current=false;}
  }
  if(!ready)return <div className="loading">상담 노트를 준비하고 있습니다…</div>;

@@ -1,0 +1,8 @@
+{
+ "name":"tutoktok-vercel","private":true,"version":"1.0.0","type":"module",
+ "engines":{"node":">=22.13.0"},
+ "scripts":{"dev":"node scripts/sync-ui.mjs && vite --host 127.0.0.1 --port 5174","build":"node scripts/sync-ui.mjs && tsc --noEmit && vite build","preview":"vite preview --host 127.0.0.1 --port 4174"},
+ "dependencies":{"react":"19.2.6","react-dom":"19.2.6","lucide-react":"1.31.0"},
+ "devDependencies":{"vite":"8.0.13","@vitejs/plugin-react":"6.0.2","@tailwindcss/vite":"4.3.3","tailwindcss":"4.3.3","typescript":"5.9.3","@types/react":"19.2.14","@types/react-dom":"19.2.3","@types/node":"22.19.19"}
+}
+

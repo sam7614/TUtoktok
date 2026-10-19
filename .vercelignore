@@ -1,0 +1,14 @@
+.git
+.env*
+.sites-runtime
+.openai
+.wrangler
+.vercel
+node_modules
+dist
+vercel-app/node_modules
+vercel-app/dist
+vercel-app/src/shared
+vercel-app/src/lib
+vercel-app/public
+*.tsbuildinfo

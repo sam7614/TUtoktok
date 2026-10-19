@@ -21,3 +21,18 @@
 - 호스팅 설정: `.openai/hosting.json`
 - 저장 스키마 및 마이그레이션: `db/schema.ts`, `drizzle/`
 - 연결 정보와 토큰은 플랫폼의 요청 범위 바인딩을 사용합니다. 소스에 자격 증명을 넣지 않습니다.
+
+## Vercel 배포
+
+루트의 `vercel.json`이 별도 Vite 클라이언트를 빌드합니다. Vercel 프로젝트의 Root Directory는 저장소 루트(`.`)로 두세요.
+
+- Install Command: `npm --prefix vercel-app ci`
+- Build Command: `npm --prefix vercel-app run build`
+- Output Directory: `vercel-app/dist`
+- Framework: Vite, Node.js 24
+
+공통 UI와 질문은 빌드 시 `app/coach.tsx`, `app/globals.css`, `lib/questions.ts`에서 복사합니다. 생성된 복사본과 로컬 로그인 정보는 Git에 저장하지 않습니다.
+
+Vercel 버전의 초안은 현재 브라우저에 보관됩니다. 기존 Sites 버전의 계정 기록과는 자동 동기화되지 않으므로, 이동할 때 백업/불러오기를 사용하세요. Google Docs 저장 버튼은 기존 본인 전용 Sites의 `/handoff` 창을 엽니다. 기록을 검토하고 저장을 누르면 기존의 Google 연결·동의·중복 방지 경로를 사용해 문서를 만듭니다. 문서 주소만 원래 창으로 돌아옵니다. Google 토큰이나 로그인 세션을 Vercel로 복사하지 않습니다.
+
+기존 Sites 배포는 이 Google Docs 저장 연결에 계속 필요합니다. 브라우저 팝업을 허용해야 하며, 처음에는 ChatGPT/Google 연결 확인이 필요할 수 있습니다. 실제 Google 쓰기 검증과 로컬 통신 테스트는 구분합니다.
