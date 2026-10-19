@@ -5,6 +5,12 @@ const WINDOW_MS=10*60*1000;
 const attempts=new Map();
 const sessionName='tu_prof_access';
 const attemptsName='tu_prof_attempts';
+function guidance(professor){
+ try{
+  const value=JSON.parse(process.env[`PROFESSOR_GUIDANCE_${professor}`]||'null');
+  return value&&['course','source','strengths','improvements'].every(k=>typeof value[k]==='string')&&value.questions&&typeof value.questions==='object'&&Object.values(value.questions).every(v=>typeof v==='string')?value:null;
+ }catch{return null;}
+}
 const json=(body,status=200,headers={})=>{const result=new Headers(headers);result.set('Cache-Control','private, no-store');result.set('Vary','Cookie');return Response.json(body,{status,headers:result});};
 function secret(){const value=process.env.PROFESSOR_SESSION_SECRET;if(!value||value.length<40)throw new Error('not_configured');return value;}
 function mac(value){return createHmac('sha256',secret()).update(value).digest('base64url');}
@@ -35,7 +41,7 @@ export async function handleAccess(request){
   const requested=Number(url.searchParams.get('professor'));
   if(request.method==='GET'){
    if(!/^[01]$/.test(url.searchParams.get('professor')||'')||!session||session.type!=='session'||session.professor!==requested||session.expires<=now)return json({status:'locked'},401);
-   return json({status:'success',professor:requested,key:vaultKey(requested).toString('base64url'),expires:session.expires});
+   return json({status:'success',professor:requested,key:vaultKey(requested).toString('base64url'),expires:session.expires,guidance:guidance(requested)});
   }
   const text=await request.text();if(text.length>1500000)return json({status:'invalid_request',message:'기록 파일이 너무 큽니다.'},413);
   let body;try{body=JSON.parse(text);}catch{return json({status:'invalid_request'},400);}
@@ -55,7 +61,7 @@ export async function handleAccess(request){
   attempts.delete(mac(`${ip}:${professor}`));
   const token=signed({type:'session',professor,expires:now+SESSION_SECONDS*1000,nonce:randomBytes(16).toString('base64url')});
   const headers=new Headers();headers.append('Set-Cookie',cookie(sessionName,token,request,SESSION_SECONDS));headers.append('Set-Cookie',cookie(attemptsName,'',request,0));
-  return json({status:'success',professor,key:vaultKey(professor).toString('base64url'),expires:now+SESSION_SECONDS*1000},200,headers);
+  return json({status:'success',professor,key:vaultKey(professor).toString('base64url'),expires:now+SESSION_SECONDS*1000,guidance:guidance(professor)},200,headers);
  }catch{return json({status:'unavailable',message:'잠금 서비스를 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.'},503);}
 }
 export default {fetch:handleAccess};
