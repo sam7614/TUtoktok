@@ -1,6 +1,10 @@
 import type {RecordData} from './questions';
 
-export type RecordingDraft={id:string;source:string;record:RecordData};
+export type RecordingDraft={id:string;source:string;record:RecordData;expertOpinionUrl?:string};
+export function expertOpinionUrl(draft:RecordingDraft|null|undefined):string|undefined{
+ const value=draft?.expertOpinionUrl;
+ return typeof value==='string'&&/^https:\/\/docs\.google\.com\/document\/d\/[A-Za-z0-9_-]+\/edit(?:\?usp=drivesdk)?$/.test(value)?value:undefined;
+}
 const marker='recording-import-id';
 export function mergeRecordingDraft(existing:RecordData|undefined,draft:RecordingDraft):RecordData{
  if(existing?.extra[marker]===draft.id)return existing;
